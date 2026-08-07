@@ -1,3 +1,17 @@
+# Personal notes, never pushed
+Notes/
+
+# Market data samples. Large, and not ours to redistribute.
+data/*
+!data/.gitkeep
+*.gz
+*.NASDAQ_ITCH50
+
+# Benchmark and capture output
+*.hgrm
+*.pcap
+results/
+
 # Prerequisites
 *.d
 

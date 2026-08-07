@@ -1,0 +1,97 @@
+# clang-format config for C++ (DSA / competitive programming)
+# Braces on their own line (GNU), aligned columns, one-per-line wrapping.
+
+# <!-- https://clang.llvm.org/docs/ClangFormatStyleOptions.html -->
+
+---
+Language: Cpp
+Standard: c++17
+BasedOnStyle: Google
+
+# ── Indentation ─────────────
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+NamespaceIndentation: All
+IndentCaseLabels: true
+IndentPPDirectives: BeforeHash
+
+# ── Braces on the new line (Allman: no extra control-stmt indent) ─
+BreakBeforeBraces: Allman
+InsertBraces: true
+Cpp11BracedListStyle: true
+
+# ── Line length ──────────────────────────────────────────────
+ColumnLimit: 100
+
+# ── Alignment (tabular look) ─────────────────────────────────
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+  AlignCompound: true
+  PadOperators: true
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+AlignAfterOpenBracket: Align
+AlignOperands: Align
+AlignEscapedNewlines: Left
+AlignArrayOfStructures: Right
+
+# ── Operators: break AFTER them, one operation per line ──────
+BreakBeforeBinaryOperators: None
+BreakBinaryOperations: OnePerLine
+
+# ── Parameters: ALWAYS one per line; args pack until they don't fit ─
+BinPackParameters: AlwaysOnePerLine
+BinPackArguments: false
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# ── Constructor init list / inheritance: before the comma ────
+BreakConstructorInitializers: BeforeComma
+ConstructorInitializerIndentWidth: 4
+BreakInheritanceList: BeforeComma
+
+# ── Spacing ──────────────────────────────────────────────────
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpacesBeforeTrailingComments: 2
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# ── Short blocks / one-liners ────────────────────────────────
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+
+# ── Includes: merge blocks and regroup ───────────────────────
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+
+# ── Misc ─────────────────────────────────────────────────────
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+FixNamespaceComments: true
+ReflowComments: true
+CompactNamespaces: false
+SeparateDefinitionBlocks: Always
+EmptyLineBeforeAccessModifier: LogicalBlock
+...
