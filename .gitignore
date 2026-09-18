@@ -66,6 +66,8 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
+tests/
+
 # Temporary files
 *.tmp
 *.log
