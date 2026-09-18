@@ -1,5 +1,9 @@
 #include "book/order_book.h"
 
+#include <functional>
+#include <map>
+#include <vector>
+
 namespace nts::book
 {
     ApplyResult OrderBook::add(std::uint64_t ref,
@@ -7,10 +11,9 @@ namespace nts::book
                                std::uint32_t shares,
                                std::uint32_t price)
     {
-        const auto [it, inserted] = orders_.emplace(ref, Order{shares, price, side});
-        (void) it;
+        const bool inserted = orders_.insert(ref, shares, price, side == Side::Buy);
 
-        // Refuse a duplicate rather than half applying it. emplace leaves the index
+        // Refuse a duplicate rather than half applying it. insert leaves the index
         // untouched when the key exists, so updating the level anyway would credit it
         // shares and an order count that no live order backs, and the book would drift
         // by exactly that amount with nothing reporting an error.
@@ -21,10 +24,14 @@ namespace nts::book
 
         order_shares_ += shares;
 
-        auto& level   = (side == Side::Buy) ? bids_[price] : asks_[price];
-        level.price   = price;
-        level.shares += shares;
-        level.orders += 1;
+        if (side == Side::Buy)
+        {
+            bids_.add(price, shares);
+        }
+        else
+        {
+            asks_.add(price, shares);
+        }
 
         level_shares_ += shares;
         level_orders_ += 1;
@@ -35,70 +42,52 @@ namespace nts::book
     ApplyResult OrderBook::reduce(std::uint64_t ref,
                                   std::uint32_t shares)
     {
-        const auto it = orders_.find(ref);
-        if (it == orders_.end())
+        OrderIndex::Order* order_p = orders_.find(ref);
+        if (order_p == nullptr)
         {
             return ApplyResult::UnknownRef;
         }
 
-        Order& order = it->second;
+        // Copied out rather than referenced through. The level update below cannot
+        // touch the index, so nothing can invalidate this, and a local is one register
+        // instead of a reload from the slot on every use.
+        const std::uint32_t order_qty   = order_p->qty();
+        const std::uint32_t order_price = order_p->price;
+        const bool          order_buy   = order_p->buy();
 
         // Clamp rather than underflow. A reduction larger than the order holds is a
         // corrupt stream or a decode bug, and wrapping a uint32_t would turn it into a
         // four billion share level that looks like real liquidity.
-        const bool          clamped   = shares > order.shares;
-        const std::uint32_t reduce_by = clamped ? order.shares : shares;
+        const bool          clamped   = shares > order_qty;
+        const std::uint32_t reduce_by = clamped ? order_qty : shares;
 
-        order.shares  -= reduce_by;
+        const std::uint32_t left = order_qty - reduce_by;
+        order_p->shares = order_buy ? (left | OrderIndex::kSideBit) : left;
         order_shares_ -= reduce_by;
 
         // The order dies at zero. Leaving a dead reference live is what lets a later
         // replace resurrect it, and the book then drifts by that quantity for the rest
         // of the day with nothing reporting an error.
-        const bool dies = (order.shares == 0);
+        const bool dies = (left == 0);
 
-        // The two maps have different comparators and therefore different types, so
-        // the side switch stays explicit rather than being hidden behind a reference.
-        if (order.side == Side::Buy)
+        // PriceLevels::reduce takes shares only; remove takes shares and one order and
+        // erases the level when it empties. A dying reduce is a remove, so the level
+        // path makes the same distinction the order path just made.
+        PriceLevels& side = order_buy ? bids_ : asks_;
+        if (dies)
         {
-            const auto level_it = bids_.find(order.price);
-            if (level_it != bids_.end())
-            {
-                level_it->second.shares -= reduce_by;
-                level_shares_           -= reduce_by;
-                if (dies)
-                {
-                    level_it->second.orders -= 1;
-                    level_orders_           -= 1;
-                    if (level_it->second.orders == 0)
-                    {
-                        bids_.erase(level_it);
-                    }
-                }
-            }
+            side.remove(order_price, reduce_by);
+            level_orders_ -= 1;
         }
         else
         {
-            const auto level_it = asks_.find(order.price);
-            if (level_it != asks_.end())
-            {
-                level_it->second.shares -= reduce_by;
-                level_shares_           -= reduce_by;
-                if (dies)
-                {
-                    level_it->second.orders -= 1;
-                    level_orders_           -= 1;
-                    if (level_it->second.orders == 0)
-                    {
-                        asks_.erase(level_it);
-                    }
-                }
-            }
+            side.reduce(order_price, reduce_by);
         }
+        level_shares_ -= reduce_by;
 
         if (dies)
         {
-            orders_.erase(it);
+            orders_.erase(ref);
         }
 
         return clamped ? ApplyResult::ClampedReduce : ApplyResult::Applied;
@@ -106,48 +95,24 @@ namespace nts::book
 
     ApplyResult OrderBook::remove(std::uint64_t ref)
     {
-        const auto it = orders_.find(ref);
-        if (it == orders_.end())
+        const OrderIndex::Order* order_p = orders_.find(ref);
+        if (order_p == nullptr)
         {
             return ApplyResult::UnknownRef;
         }
 
-        const Order& order = it->second;
+        const std::uint32_t order_qty   = order_p->qty();
+        const std::uint32_t order_price = order_p->price;
+        const bool          order_buy   = order_p->buy();
 
-        order_shares_ -= order.shares;
+        order_shares_ -= order_qty;
 
-        if (order.side == Side::Buy)
-        {
-            const auto level_it = bids_.find(order.price);
-            if (level_it != bids_.end())
-            {
-                level_it->second.shares -= order.shares;
-                level_it->second.orders -= 1;
-                level_shares_           -= order.shares;
-                level_orders_           -= 1;
-                if (level_it->second.orders == 0)
-                {
-                    bids_.erase(level_it);
-                }
-            }
-        }
-        else
-        {
-            const auto level_it = asks_.find(order.price);
-            if (level_it != asks_.end())
-            {
-                level_it->second.shares -= order.shares;
-                level_it->second.orders -= 1;
-                level_shares_           -= order.shares;
-                level_orders_           -= 1;
-                if (level_it->second.orders == 0)
-                {
-                    asks_.erase(level_it);
-                }
-            }
-        }
+        PriceLevels& side = order_buy ? bids_ : asks_;
+        side.remove(order_price, order_qty);
+        level_shares_ -= order_qty;
+        level_orders_ -= 1;
 
-        orders_.erase(it);
+        (void) orders_.erase(ref);
         return ApplyResult::Applied;
     }
 
@@ -156,8 +121,8 @@ namespace nts::book
                                    std::uint32_t shares,
                                    std::uint32_t price)
     {
-        const auto it = orders_.find(original_ref);
-        if (it == orders_.end())
+        const OrderIndex::Order* original = orders_.find(original_ref);
+        if (original == nullptr)
         {
             return ApplyResult::UnknownRef;
         }
@@ -165,14 +130,14 @@ namespace nts::book
         // Check the new reference before touching anything. Discovering the collision
         // after the remove would leave the original deleted and the replacement
         // refused, losing the order outright.
-        if (new_ref != original_ref && orders_.count(new_ref) != 0)
+        if (new_ref != original_ref && orders_.find(new_ref) != nullptr)
         {
             return ApplyResult::DuplicateRef;
         }
 
         // Read the side before the erase. It is the one field the replace message does
         // not carry, and after remove() the order it came from is gone.
-        const Side side = it->second.side;
+        const Side side = original->buy() ? Side::Buy : Side::Sell;
 
         const ApplyResult removed = remove(original_ref);
         if (removed != ApplyResult::Applied)
@@ -184,20 +149,12 @@ namespace nts::book
 
     std::optional<Level> OrderBook::best_bid() const
     {
-        if (bids_.empty())
-        {
-            return std::nullopt;
-        }
-        return bids_.begin()->second;
+        return bids_.best();
     }
 
     std::optional<Level> OrderBook::best_ask() const
     {
-        if (asks_.empty())
-        {
-            return std::nullopt;
-        }
-        return asks_.begin()->second;
+        return asks_.best();
     }
 
     std::size_t OrderBook::live_orders() const noexcept
@@ -207,8 +164,8 @@ namespace nts::book
 
     std::uint32_t OrderBook::shares_of(std::uint64_t ref) const noexcept
     {
-        const auto it = orders_.find(ref);
-        return it == orders_.end() ? 0u : it->second.shares;
+        const OrderIndex::Order* order = orders_.find(ref);
+        return order == nullptr ? 0u : order->qty();
     }
 
     std::uint64_t OrderBook::resting_shares() const noexcept
@@ -216,14 +173,64 @@ namespace nts::book
         return order_shares_;
     }
 
+    std::size_t OrderBook::index_rehashes() const noexcept
+    {
+        return orders_.rehashes();
+    }
+
+    std::size_t OrderBook::rebases() const noexcept
+    {
+        return bids_.rebases() + asks_.rebases();
+    }
+
+    void OrderBook::reserve()
+    {
+        bids_.reserve();
+        asks_.reserve();
+    }
+
     bool OrderBook::check_invariants_fast() const noexcept
     {
-        // Two totals maintained down separate paths. order_shares_ moves only where an
-        // order changes, level_shares_ only where a level changes, and the level path
-        // is the one guarded by a find() that can miss. A divergence here is exactly
-        // the level-versus-index drift, caught in constant time.
         return order_shares_ == level_shares_ && orders_.size() == level_orders_;
     }
+
+    namespace
+    {
+        // The stored side against a rebuild from the index. Written once for both
+        // sides because the comparison does not care which way "best" points; only
+        // the container being checked does.
+        bool side_matches(const PriceLevels&                          stored,
+                          const std::map<std::uint32_t, Level>&       computed)
+        {
+            if (!stored.check_invariants())
+            {
+                return false;
+            }
+            std::vector<Level> levels;
+            stored.levels(levels);
+            if (levels.size() != computed.size())
+            {
+                return false;
+            }
+            for (const Level& level : levels)
+            {
+                if (level.shares == 0 || level.orders == 0)
+                {
+                    return false;
+                }
+                const auto it = computed.find(level.price);
+                if (it == computed.end())
+                {
+                    return false;
+                }
+                if (level.shares != it->second.shares || level.orders != it->second.orders)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }  // namespace
 
     bool OrderBook::check_invariants() const
     {
@@ -232,60 +239,17 @@ namespace nts::book
             return false;
         }
 
-        std::map<std::uint32_t, Level, std::greater<>> computed_bids;
-        std::map<std::uint32_t, Level>                 computed_asks;
+        std::map<std::uint32_t, Level> computed_bids;
+        std::map<std::uint32_t, Level> computed_asks;
 
-        // The order index is the authority. Levels are a derived cache, so the check
-        // that matters is that the cache still equals what the index implies.
-        for (const auto& [ref, order] : orders_)
-        {
+        orders_.for_each([&](std::uint64_t ref, const OrderIndex::Order& order) {
             (void) ref;
-            auto& level =
-                (order.side == Side::Buy) ? computed_bids[order.price] : computed_asks[order.price];
+            auto& level = order.buy() ? computed_bids[order.price] : computed_asks[order.price];
             level.price   = order.price;
-            level.shares += order.shares;
+            level.shares += order.qty();
             level.orders += 1;
-        }
+        });
 
-        if (bids_.size() != computed_bids.size() || asks_.size() != computed_asks.size())
-        {
-            return false;
-        }
-
-        for (const auto& [price, level] : bids_)
-        {
-            if (level.shares == 0 || level.orders == 0)
-            {
-                return false;
-            }
-            const auto it = computed_bids.find(price);
-            if (it == computed_bids.end())
-            {
-                return false;
-            }
-            if (level.shares != it->second.shares || level.orders != it->second.orders)
-            {
-                return false;
-            }
-        }
-
-        for (const auto& [price, level] : asks_)
-        {
-            if (level.shares == 0 || level.orders == 0)
-            {
-                return false;
-            }
-            const auto it = computed_asks.find(price);
-            if (it == computed_asks.end())
-            {
-                return false;
-            }
-            if (level.shares != it->second.shares || level.orders != it->second.orders)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return side_matches(bids_, computed_bids) && side_matches(asks_, computed_asks);
     }
 }  // namespace nts::book
