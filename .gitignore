@@ -2,7 +2,7 @@
 Notes/
 
 # Market data samples. Large, and not ours to redistribute.
-data/*
+data/
 !data/.gitkeep
 *.gz
 *.NASDAQ_ITCH50
