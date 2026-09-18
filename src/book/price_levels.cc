@@ -234,22 +234,18 @@ namespace nts::book
                 --array_count_;
                 if (best_cell_ == c)
                 {
+                    // Deliberately no rebase here, even if the next best is now in
+                    // the map. An earlier version re-centred on it, and on a thin
+                    // pre-open side that thrashed: a stub at $0.01 sits in far_,
+                    // the one real order at $150 is removed, the array empties, the
+                    // window is dragged to the stub, and the next real order drags
+                    // it back. Two full rebases per order, measured as 36,430 in a
+                    // 2.3 million message slice and the whole p99.9 regression.
+                    // Leaving the window parked where the market last was costs
+                    // nothing: best() already consults far_, so a far level that is
+                    // genuinely best is still reported, and the next add that
+                    // beats it re-centres through the add path if it must.
                     best_cell_ = scan_best();
-                    // The next best may now be in the map, in which case the window
-                    // has drifted off the market and is re-centred. Not noexcept
-                    // safe in theory (rebase allocates), but a rebase after a remove
-                    // only moves levels that already exist, and the vector is
-                    // reserved to their count.
-                    if (!far_.empty())
-                    {
-                        const std::uint32_t fb = far_best_price();
-                        if (fb % kTick == 0 &&
-                            (best_cell_ < 0 ||
-                             better(fb, cells_[static_cast<std::size_t>(best_cell_)].price)))
-                        {
-                            rebase(fb);
-                        }
-                    }
                 }
             }
             return;
