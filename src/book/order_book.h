@@ -2,18 +2,14 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <optional>
-#include <unordered_map>
+
+#include "book/level.h"
+#include "book/price_levels.h"
+#include "common/flat_hash_map.h"
 
 namespace nts::book
 {
-    enum class Side : char
-    {
-        Buy  = 'B',
-        Sell = 'S',
-    };
-
     enum class ApplyResult : std::uint8_t
     {
         Applied,
@@ -22,33 +18,8 @@ namespace nts::book
         ClampedReduce,
     };
 
-    /** One price level, aggregated. */
-    struct Level
-    {
-        std::uint32_t price  = 0;  ///< four implied decimals
-        std::uint64_t shares = 0;
-        std::uint32_t orders = 0;
-    };
-
     /**
      * The displayed limit order book for one symbol.
-     *
-     * Correctness first. Every container here is chosen to be obviously right and
-     * easy to reason about, not fast. Phase 2 replaces whichever ones the profile
-     * says are hot, and it can only do that safely because this version is proven
-     * first and its numbers are recorded as the baseline.
-     *
-     * Target complexity, stated before building so it can be missed:
-     *   add            O(log L)  std::map insert
-     *   execute        O(1) average lookup, plus the level update
-     *   cancel         O(1) average lookup, plus the level update
-     *   remove         O(1) average lookup, plus the level update
-     *   best bid/ask   O(1)      std::map::begin on an ordered container
-     *
-     * Bids are ordered descending so that begin() is the best on both sides. Two
-     * maps rather than one keyed on side, because a comparator cannot vary per key
-     * and getting best bid and best ask out of one ordered container means one of
-     * them is a reverse iterator, which is the asymmetry that breeds off by ones.
      */
     class OrderBook
     {
@@ -107,25 +78,21 @@ namespace nts::book
         [[nodiscard]] bool check_invariants_fast() const noexcept;
         [[nodiscard]] bool check_invariants() const;
 
+        [[nodiscard]] std::size_t index_rehashes() const noexcept;
+
+        [[nodiscard]] std::size_t rebases() const noexcept;
+
+        /** Allocates both cell arrays now, so the first add pays no page faults. */
+        void reserve();
+
     private:
-        struct Order
-        {
-            std::uint32_t shares = 0;
-            std::uint32_t price  = 0;
-            Side          side   = Side::Buy;
-        };
-
-        std::unordered_map<std::uint64_t, Order> orders_;
-
-        std::map<std::uint32_t, Level, std::greater<>> bids_;
-        std::map<std::uint32_t, Level>                 asks_;
+        OrderIndex  orders_;
+        PriceLevels bids_{Side::Buy, 0, PriceLevels::kDefaultSpan};
+        PriceLevels asks_{Side::Sell, 0, PriceLevels::kDefaultSpan};
 
         // Maintained only in the order update paths.
         std::uint64_t order_shares_ = 0;
 
-        // Maintained only in the level update paths. Must always equal the pair
-        // above; check_invariants_fast is exactly that comparison, which is what
-        // makes it constant time and callable after every message.
         std::uint64_t level_shares_ = 0;
         std::uint64_t level_orders_ = 0;
     };
