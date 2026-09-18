@@ -21,8 +21,7 @@ namespace nts::receive
         RecvfromReceiver(std::string_view bind_host,
                          std::uint16_t    port,
                          bool             multicast,
-                         std::string_view multicast_group = "",
-                         bool             busy_poll       = false);
+                         std::string_view multicast_group = "");
         ~RecvfromReceiver() override;
 
         RecvfromReceiver(const RecvfromReceiver&)            = delete;
@@ -43,7 +42,7 @@ namespace nts::receive
 
         [[nodiscard]] const char* name() const noexcept override
         {
-            return busy_poll_ ? "recvfrom+spin" : "recvfrom";
+            return "recvfrom";
         }
 
         /** Datagrams longer than the buffer. Each one is a desynchronised packet. */
@@ -66,7 +65,6 @@ namespace nts::receive
     private:
         int                           fd_ = -1;
         std::uint16_t                 port_ = 0;
-        bool                          busy_poll_;
         std::atomic<bool>             stop_{false};
         std::uint64_t                 packets_   = 0;
         std::uint64_t                 syscalls_  = 0;

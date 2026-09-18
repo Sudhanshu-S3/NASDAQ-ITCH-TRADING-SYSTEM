@@ -6,7 +6,6 @@
 #include <string>
 
 #include <arpa/inet.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -19,20 +18,9 @@ namespace nts::receive
     RecvfromReceiver::RecvfromReceiver(std::string_view bind_host,
                                        std::uint16_t    port,
                                        bool             multicast,
-                                       std::string_view multicast_group,
-                                       bool             busy_poll)
-        : busy_poll_(busy_poll)
+                                       std::string_view multicast_group)
     {
-        fd_   = open_udp_socket(bind_host, port, multicast, multicast_group, &port_);
-        if (busy_poll_)
-        {
-            const int flags = ::fcntl(fd_, F_GETFL, 0);
-            if (flags < 0 || ::fcntl(fd_, F_SETFL, flags | O_NONBLOCK) < 0)
-            {
-                ::close(fd_);
-                throw std::runtime_error(std::string("fcntl O_NONBLOCK: ") + std::strerror(errno));
-            }
-        }
+        fd_ = open_udp_socket(bind_host, port, multicast, multicast_group, &port_);
     }
 
     RecvfromReceiver::~RecvfromReceiver()
@@ -71,10 +59,6 @@ namespace nts::receive
                 if (errno == EINTR)
                 {
                     continue;  // a stray signal is not the end of the stream
-                }
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                {
-                    continue;  // busy poll: nothing there yet, spin
                 }
                 break;  // anything else is a real socket failure
             }
